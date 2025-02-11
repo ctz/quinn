@@ -1,14 +1,11 @@
 use std::{any::Any, io, str, sync::Arc};
 
-#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-use aws_lc_rs::aead;
 use bytes::BytesMut;
-#[cfg(feature = "ring")]
-use ring::aead;
 pub use rustls::Error;
 use rustls::{
     self,
     client::danger::ServerCertVerifier,
+    crypto::cipher::{AeadKey, Iv},
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
     CipherSuite,
@@ -176,17 +173,10 @@ impl crypto::Session for TlsSession {
         let tag_start = tag_start + pseudo_packet.len();
         pseudo_packet.extend_from_slice(payload);
 
-        let (nonce, key) = match self.version {
-            Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
-            Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
-            _ => unreachable!(),
-        };
-
-        let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
-
         let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
-        key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
+        retry_key_for_version(self.version, &self.suite)
+            .decrypt_in_place(0, aad, tag)
+            .is_ok()
     }
 
     fn export_keying_material(
@@ -200,6 +190,18 @@ impl crypto::Session for TlsSession {
             .map_err(|_| ExportKeyingMaterialError)?;
         Ok(())
     }
+}
+
+fn retry_key_for_version(version: Version, initial_suite: &Suite) -> Box<dyn PacketKey> {
+    let (nonce, key) = match version {
+        Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
+        Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
+        _ => unreachable!(),
+    };
+
+    initial_suite
+        .quic
+        .packet_key(AeadKey::new(&key), Iv::from(nonce))
 }
 
 const RETRY_INTEGRITY_KEY_DRAFT: [u8; 16] = [
@@ -510,22 +512,14 @@ impl crypto::ServerConfig for QuicServerConfig {
     fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
         let version = interpret_version(version).unwrap();
-        let (nonce, key) = match version {
-            Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
-            Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
-            _ => unreachable!(),
-        };
 
         let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
         pseudo_packet.push(orig_dst_cid.len() as u8);
         pseudo_packet.extend_from_slice(orig_dst_cid);
         pseudo_packet.extend_from_slice(packet);
 
-        let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
-
-        let tag = key
-            .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
+        let tag = retry_key_for_version(version, &self.initial)
+            .encrypt_in_place(0, &pseudo_packet, &mut [])
             .unwrap();
         let mut result = [0; 16];
         result.copy_from_slice(tag.as_ref());
