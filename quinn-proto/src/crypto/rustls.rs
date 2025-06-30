@@ -6,6 +6,7 @@ use rustls::{
     self, CipherSuite,
     client::danger::ServerCertVerifier,
     crypto::cipher::{AeadKey, Iv},
+    crypto::tls13::{Hkdf, OkmBlock},
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
 };
@@ -635,5 +636,39 @@ fn interpret_version(version: u32) -> Result<Version, UnsupportedVersion> {
         0xff00_001d..=0xff00_0020 => Ok(Version::V1Draft),
         0x0000_0001 | 0xff00_0021..=0xff00_0022 => Ok(Version::V1),
         _ => Err(UnsupportedVersion),
+    }
+}
+
+pub(crate) struct HmacSha256Signer {
+    key: OkmBlock,
+    hkdf: &'static dyn Hkdf,
+}
+
+impl HmacSha256Signer {
+    pub(crate) fn new(key: OkmBlock, hkdf: &'static dyn Hkdf) -> Self {
+        Self { key, hkdf }
+    }
+
+    const SHA256_LEN: usize = 32;
+}
+
+impl crypto::HmacKey for HmacSha256Signer {
+    fn sign(&self, data: &[u8], signature_out: &mut [u8]) {
+        let tag = self.hkdf.hmac_sign(&self.key, data);
+        signature_out.copy_from_slice(tag.as_ref());
+    }
+
+    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
+        let mut wanted = [0u8; Self::SHA256_LEN];
+        self.sign(data, &mut wanted);
+
+        match crate::constant_time::eq(&wanted, signature) {
+            true => Ok(()),
+            false => Err(CryptoError),
+        }
+    }
+
+    fn signature_len(&self) -> usize {
+        Self::SHA256_LEN
     }
 }

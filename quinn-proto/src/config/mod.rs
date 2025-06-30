@@ -7,6 +7,12 @@ use std::{
 
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use rustls::client::WebPkiServerVerifier;
+#[cfg(any(
+    feature = "rustls",
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring"
+))]
+use rustls::crypto::{CryptoProvider, tls13::OkmBlock};
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
@@ -15,8 +21,17 @@ use thiserror::Error;
 use crate::BloomTokenLog;
 #[cfg(not(feature = "bloom"))]
 use crate::NoneTokenLog;
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
-use crate::crypto::rustls::{QuicServerConfig, configured_provider};
+#[cfg(any(
+    feature = "rustls",
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring"
+))]
+use crate::crypto::{
+    CryptoError,
+    rustls::{
+        HmacSha256Signer, QuicServerConfig, configured_provider, initial_suite_from_provider,
+    },
+};
 use crate::{
     DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
     TokenLog, TokenMemoryCache, TokenStore, VarInt, VarIntBoundsExceeded,
@@ -62,6 +77,29 @@ impl EndpointConfig {
             min_reset_interval: Duration::from_millis(20),
             rng_seed: None,
         }
+    }
+
+    /// Makes a default `EndpointConfig` with a random `reset_key`.
+    ///
+    /// `provider` is used to
+    ///
+    /// This fails if the underlying random source fails, or if `provider` does not
+    /// support the "initial" QUIC cipher suite `TLS13_AES_128_GCM_SHA256`.
+    #[cfg(feature = "rustls")]
+    pub fn for_rustls_provider(provider: &Arc<CryptoProvider>) -> Result<Self, CryptoError> {
+        let mut reset_key = [0; OkmBlock::MAX_LEN];
+        provider
+            .secure_random
+            .fill(&mut reset_key)
+            .map_err(|_| CryptoError)?;
+
+        let reset_key = OkmBlock::new(&reset_key[..]);
+        let hmac_sha256_suite = initial_suite_from_provider(provider).ok_or(CryptoError)?;
+
+        Ok(Self::new(Arc::new(HmacSha256Signer::new(
+            reset_key,
+            hmac_sha256_suite.suite.hkdf_provider,
+        ))))
     }
 
     /// Supply a custom connection ID generator factory
