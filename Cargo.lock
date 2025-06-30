@@ -356,7 +356,7 @@ dependencies = [
  "hdrhistogram",
  "quinn",
  "rcgen",
- "rustls",
+ "rustls 0.23.23",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -418,7 +418,7 @@ dependencies = [
  "bytes",
  "quinn",
  "rcgen",
- "rustls",
+ "rustls 0.23.23",
 ]
 
 [[package]]
@@ -1413,7 +1413,7 @@ dependencies = [
  "quinn",
  "quinn-proto",
  "rcgen",
- "rustls",
+ "rustls 0.23.23",
  "rustls-pemfile",
  "serde",
  "serde_json",
@@ -1535,7 +1535,7 @@ dependencies = [
  "rand",
  "rcgen",
  "rustc-hash 2.1.1",
- "rustls",
+ "rustls 0.23.23",
  "rustls-pemfile",
  "smol",
  "socket2",
@@ -1566,7 +1566,7 @@ dependencies = [
  "rcgen",
  "ring",
  "rustc-hash 2.1.1",
- "rustls",
+ "rustls 0.23.23",
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
@@ -1774,14 +1774,26 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "730944ca083c1c233a75c09f199e973ca499344a2b7ba9e755c457e86fb4a321"
+version = "0.23.23"
+source = "git+https://github.com/rustls/rustls?branch=jbp-aeadkey-ctor#24652d016c482facd9f37d9d90ac368c6ee2e2a1"
 dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
  "ring",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls"
+version = "0.23.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "730944ca083c1c233a75c09f199e973ca499344a2b7ba9e755c457e86fb4a321"
+dependencies = [
+ "once_cell",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -1829,7 +1841,7 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls",
+ "rustls 0.23.27",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki",
